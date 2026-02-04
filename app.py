@@ -1,13 +1,20 @@
+# ==========================================
+# CONFIGURATION (Direct Connection)
+# ==========================================
 import streamlit as st
-import sqlite3
 import pandas as pd
 import re
-import difflib # <-- Standard Library, Walang install! Maghahanap ng kamukha!
-from deep_translator import GoogleTranslator
+import difflib
+from supabase import create_client, Client
 
-# ==========================================
-# CONFIGURATION
-# ==========================================
+# Ito ang credentials na binigay mo kanina
+# Siguraduhin na correct ito
+url = "https://osolprafwnjroxtfooem.supabase.co"
+key = "sb_publishable_nEZK1UTE237qgFhJE4KuZg_E5DOvZJ2"
+
+# Initialize Supabase
+supabase: Client = create_client(url, key)
+
 st.set_page_config(
     page_title="Talking Bible (AI Search)",
     page_icon="🤖",
@@ -60,28 +67,41 @@ VB_MAX_CHAPTERS = {
 }
 
 # ==========================================
-# DATABASE FUNCTIONS
+# DATABASE FUNCTIONS (Supabase Version)
 # ==========================================
-def get_connection():
-    conn = sqlite3.connect('bible.db')
-    conn.row_factory = sqlite3.Row
-    return conn
-
 def get_versions():
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT DISTINCT version FROM bible_verses")
-    versions = [row[0] for row in cursor.fetchall()]
-    conn.close()
+    response = supabase.table('bible_verses').select('version').execute()
+    versions = list(set([d['version'] for d in response.data]))
+    versions.sort()
     return versions
 
 def get_books():
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT DISTINCT book_title FROM bible_verses ORDER BY book_id")
-    books = [row[0] for row in cursor.fetchall()]
-    conn.close()
+    response = supabase.table('bible_verses').select('book_title').execute()
+    books = list(set([d['book_title'] for d in response.data]))
+    books.sort()
     return books
+
+def get_verses(version, book, chapter=None, start_verse=None, end_verse=None):
+    query = supabase.table('bible_verses').select("*").eq('version', version).eq('book_title', book)
+    if chapter:
+        query = query.eq('chapter', chapter)
+        if start_verse and end_verse:
+            query = query.gte('verse', start_verse).lte('verse', end_verse)
+        elif start_verse:
+            query = query.eq('verse', start_verse)
+    response = query.order('verse').execute()
+    df = pd.DataFrame(response.data)
+    if not df.empty:
+        df = df.sort_values(by=['chapter', 'verse'])
+    return df
+
+def search_keyword(keyword, version=None):
+    if version:
+        response = supabase.table('bible_verses').select("*").ilike('text', f'%{keyword}%').eq('version', version).limit(50).execute()
+    else:
+        response = supabase.table('bible_verses').select("*").ilike('text', f'%{keyword}%').limit(50).execute()
+    df = pd.DataFrame(response.data)
+    return df
 
 # ==========================================
 # AI LOGIC: FUZZY MATCH
